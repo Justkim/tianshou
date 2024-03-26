@@ -15,6 +15,7 @@ from tianshou.data import (
     ReplayBuffer,
     ReplayBufferManager,
     SequenceSummaryStats,
+    TwoPlayerSequenceSummaryStats,
     VectorReplayBuffer,
     to_numpy,
 )
@@ -22,11 +23,10 @@ from tianshou.data.batch import alloc_by_keys_diff
 from tianshou.data.types import RolloutBatchProtocol
 from tianshou.env import BaseVectorEnv, DummyVectorEnv
 from tianshou.policy import BasePolicy
-from tianshou.utils.print import DataclassPPrintMixin
 
 
 @dataclass(kw_only=True)
-class CollectStatsBase(DataclassPPrintMixin):
+class CollectStatsBase:
     """The most basic stats, often used for offline learning."""
 
     n_collected_episodes: int = 0
@@ -98,8 +98,6 @@ class Collector:
     ) -> None:
         super().__init__()
         if isinstance(env, gym.Env) and not hasattr(env, "__len__"):
-            warnings.warn("Single environment detected, wrap to DummyVectorEnv.")
-            # Unfortunately, mypy seems to ignore the isinstance in lambda, maybe a bug in mypy
             self.env = DummyVectorEnv([lambda: env])
         else:
             self.env = env  # type: ignore
@@ -400,21 +398,36 @@ class Collector:
             )
             self.data = cast(RolloutBatchProtocol, data)
             self.reset_env()
-
-        return CollectStats(
-            n_collected_episodes=episode_count,
-            n_collected_steps=step_count,
-            collect_time=collect_time,
-            collect_speed=step_count / collect_time,
-            returns=np.array(episode_returns),
-            returns_stat=SequenceSummaryStats.from_sequence(episode_returns)
-            if len(episode_returns) > 0
-            else None,
-            lens=np.array(episode_lens, int),
-            lens_stat=SequenceSummaryStats.from_sequence(episode_lens)
-            if len(episode_lens) > 0
-            else None,
-        )
+        if (np.array(episode_returns).ndim == 2):
+            return CollectStats(
+                n_collected_episodes=episode_count,
+                n_collected_steps=step_count,
+                collect_time=collect_time,
+                collect_speed=step_count / collect_time,
+                returns=np.array(episode_returns),
+                returns_stat=TwoPlayerSequenceSummaryStats.from_sequence(episode_returns)
+                if len(episode_returns) > 0
+                else None,
+                lens=np.array(episode_lens, int),
+                lens_stat=SequenceSummaryStats.from_sequence(episode_lens)
+                if len(episode_lens) > 0
+                else None,
+            )
+        else:
+            return CollectStats(
+                n_collected_episodes=episode_count,
+                n_collected_steps=step_count,
+                collect_time=collect_time,
+                collect_speed=step_count / collect_time,
+                returns=np.array(episode_returns),
+                returns_stat=SequenceSummaryStats.from_sequence(episode_returns)
+                if len(episode_returns) > 0
+                else None,
+                lens=np.array(episode_lens, int),
+                lens_stat=SequenceSummaryStats.from_sequence(episode_lens)
+                if len(episode_lens) > 0
+                else None,
+            )
 
 
 class AsyncCollector(Collector):
@@ -656,3 +669,4 @@ class AsyncCollector(Collector):
             if len(episode_lens) > 0
             else None,
         )
+
