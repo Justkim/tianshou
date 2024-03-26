@@ -5,7 +5,7 @@ from overrides import override
 
 from tianshou.data import Batch, ReplayBuffer
 from tianshou.data.batch import BatchProtocol, IndexType
-from tianshou.data.types import RolloutBatchProtocol
+from tianshou.data.types import RolloutBatchProtocol, PrioBatchProtocol
 from tianshou.policy import BasePolicy
 from tianshou.policy.base import TLearningRateScheduler, TrainingStats
 
@@ -48,11 +48,11 @@ class MapTrainingStats(TrainingStats):
         return result_dict
 
 
-class MAPRolloutBatchProtocol(RolloutBatchProtocol, Protocol):
+class MAPRolloutBatchProtocol(PrioBatchProtocol, Protocol):
     # TODO: this might not be entirely correct.
     #  The whole MAP data processing pipeline needs more documentation and possibly some refactoring
     @overload
-    def __getitem__(self, index: str) -> RolloutBatchProtocol:
+    def __getitem__(self, index: str) -> PrioBatchProtocol:
         ...
 
     @overload
@@ -117,6 +117,7 @@ class MultiAgentPolicyManager(BasePolicy):
         self.policies[agent_id] = policy
 
     # TODO: violates Liskov substitution principle
+
     def process_fn(  # type: ignore
         self,
         batch: MAPRolloutBatchProtocol,
@@ -130,7 +131,8 @@ class MultiAgentPolicyManager(BasePolicy):
         original reward afterwards.
         """
         # TODO: maybe only str is actually allowed as agent_id? See MAPRolloutBatchProtocol
-        results: dict[str | int, RolloutBatchProtocol] = {}
+        results: dict[str | int, PrioBatchProtocol] = {}
+
         assert isinstance(
             batch.obs,
             BatchProtocol,
@@ -144,7 +146,7 @@ class MultiAgentPolicyManager(BasePolicy):
         for agent, policy in self.policies.items():
             agent_index = np.nonzero(batch.obs.agent_id == agent)[0]
             if len(agent_index) == 0:
-                results[agent] = cast(RolloutBatchProtocol, Batch())
+                results[agent] = cast(MAPRolloutBatchProtocol, Batch())
                 continue
             tmp_batch, tmp_indice = batch[agent_index], indice[agent_index]
             if has_rew:
@@ -155,15 +157,20 @@ class MultiAgentPolicyManager(BasePolicy):
                     tmp_batch.obs = tmp_batch.obs.obs
                 if hasattr(tmp_batch.obs_next, "obs"):
                     tmp_batch.obs_next = tmp_batch.obs_next.obs
+            tmp_batch.indices = tmp_indice
             results[agent] = policy.process_fn(tmp_batch, buffer, tmp_indice)
+
+
         if has_rew:  # restore from save_rew
             buffer._meta.rew = save_rew
+
+
         return Batch(results)
 
     def exploration_noise(
         self,
         act: np.ndarray | BatchProtocol,
-        batch: RolloutBatchProtocol,
+        batch: PrioBatchProtocol,
     ) -> np.ndarray | BatchProtocol:
         """Add exploration noise from sub-policy onto act."""
         assert isinstance(
@@ -256,6 +263,27 @@ class MultiAgentPolicyManager(BasePolicy):
         holder["state"] = state_dict
         return holder
 
+    def post_process_fn(
+            self,
+            batch: MAPRolloutBatchProtocol,
+            buffer: ReplayBuffer,
+            indices: np.ndarray,
+    ) -> None:
+        """Post-process the data from the provided replay buffer.
+
+        This will only have an effect if the buffer has the
+        method `update_weight` and the batch has the attribute `weight`.
+
+        Typical usage is to update the sampling weight in prioritized
+        experience replay. Used in :meth:`update`.
+        """
+
+        for agent_id, policy in self.policies.items():
+            data = batch[agent_id]
+            if not data.is_empty():
+                policy.post_process_fn(data, buffer, data.indices)
+
+
     # Violates Liskov substitution principle
     def learn(  # type: ignore
         self,
@@ -282,3 +310,4 @@ class MultiAgentPolicyManager(BasePolicy):
         for policy in self.policies.values():
             policy.train(mode)
         return self
+
