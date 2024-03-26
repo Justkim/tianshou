@@ -22,6 +22,7 @@ from tianshou.data.stats import (
     EpochStats,
     InfoStats,
     SequenceSummaryStats,
+    TwoPlayerSequenceSummaryStats,
     TimingStats,
 )
 from tianshou.data.collector import Collector, AsyncCollector, CollectStats, CollectStatsBase
@@ -49,5 +50,6 @@ __all__ = [
     "EpochStats",
     "InfoStats",
     "SequenceSummaryStats",
+    "TwoPlayerSequenceSummaryStats",
     "TimingStats",
 ]
